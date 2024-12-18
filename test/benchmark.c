@@ -56,6 +56,7 @@
 
 #include "qatzip.h"
 #include "qz_utils.h"
+#include "libdeflate.h"
 
 #define NANOSEC (1000000000ULL) /* 1 second */
 #define NANOUSEC (1000) /* 1 usec */
@@ -303,6 +304,11 @@ void *benchmark(void *args)
         pthread_exit((void *)"qzInit failed");
     }
 
+    //setup libdeflate
+    struct libdeflate_compressor *libdeflate1 = libdeflate_alloc_compressor(1);
+    struct libdeflate_decompressor *libdeflate2 = libdeflate_alloc_decompressor();
+
+
     csCount = srcSize / chunkSize + (srcSize % chunkSize ? 1 : 0);
     chunkSizes = (size_t *)malloc(csCount * sizeof(size_t));
     compSizes = (size_t *)malloc(csCount * sizeof(size_t));
@@ -400,20 +406,25 @@ setupend:
             //                        chunkSizes[nbChunk]);
 
             // xfastcompress
-            // qat_zstd_compress(3, tmpSrcBuffer, chunkSizes[nbChunk],
-            //     tmpDestBuffer, tmpDestSize, &cSize);
-            //printf("cSize=%llu\n", cSize);
-
-            //QATzip deflate
-            unsigned int in_sz = chunkSizes[nbChunk];
-            unsigned int out_sz = tmpDestSize;
-            int ret = qzCompress(&sess, tmpSrcBuffer, &in_sz, tmpDestBuffer, &out_sz, 1);
-            if (ret != QZ_OK) {
-                QZ_ERROR("ERROR: Compression FAILED with return value: %d\n", ret);
-                // dumpInputData(in_sz, src + consumed);
-                // goto done;
+            {
+                // qat_zstd_compress(3, tmpSrcBuffer, chunkSizes[nbChunk],
+                //     tmpDestBuffer, tmpDestSize, &cSize);
+                //printf("cSize=%llu\n", cSize);
             }
-            cSize = out_sz;
+
+            // QATzip deflate
+            {
+                unsigned int in_sz = chunkSizes[nbChunk];
+                unsigned int out_sz = tmpDestSize;
+                int ret = qzCompress(&sess, tmpSrcBuffer, &in_sz, tmpDestBuffer, &out_sz, 1);
+                if (ret != QZ_OK) {
+                    QZ_ERROR("ERROR: Compression FAILED with return value: %d\n", ret);
+                }
+                cSize = out_sz;
+            }
+
+            // // libdeflate
+            // cSize = libdeflate_gzip_compress(libdeflate1, tmpSrcBuffer, chunkSizes[nbChunk], tmpDestBuffer, tmpDestSize);
 
             GETTIME(endTicks);
             if (ZSTD_isError(cSize)) {
@@ -482,21 +493,30 @@ compressend:
             //                              compSizes[nbChunk]);
 
             //QATzip deflate
-            unsigned int in_sz = compSizes[nbChunk];
-            unsigned int out_sz = chunkSizes[nbChunk];;
-            // QZ_ERROR("before in_sz=%d, out_sz=%d\n", in_sz, out_sz);
-            int ret = qzDecompress(&sess_decompress, tmpSrcBuffer, &in_sz, tmpDestBuffer, &out_sz);
-            if (ret != QZ_OK) {
-                QZ_ERROR("ERROR: DeCompression FAILED with return value: %d\n", ret);
-                // goto done;
+            {
+                unsigned int in_sz = compSizes[nbChunk];
+                unsigned int out_sz = chunkSizes[nbChunk];
+                // QZ_ERROR("before in_sz=%d, out_sz=%d\n", in_sz, out_sz);
+                int ret = qzDecompress(&sess_decompress, tmpSrcBuffer, &in_sz, tmpDestBuffer, &out_sz);
+                if (ret != QZ_OK) {
+                    QZ_ERROR("ERROR: DeCompression FAILED with return value: %d\n", ret);
+                    // goto done;
+                }
+                dcSize = out_sz;
+                // QZ_ERROR("after in_sz=%d, out_sz=%d\n", in_sz, out_sz);
             }
-            dcSize = out_sz;
-            // QZ_ERROR("after in_sz=%d, out_sz=%d\n", in_sz, out_sz);
+
+            // // libdeflate
+            // if(LIBDEFLATE_SUCCESS != libdeflate_gzip_decompress(libdeflate2, 
+            //             tmpSrcBuffer, compSizes[nbChunk], 
+            //             tmpDestBuffer, chunkSizes[nbChunk], &dcSize)) {
+            //     DISPLAY("libdeflate Decompress failed\n");
+            // }
 
             /* Compare original buffer with decompress output */
-            // if (memcmp(tmpDestBuffer, tmpOriBuffer, out_sz)) {
-            //     QZ_ERROR("ERROR: Decompressed != src, nbChunk=%ld\n", nbChunk);
-            // }
+            if (memcmp(tmpDestBuffer, tmpOriBuffer, dcSize)) {
+                QZ_ERROR("ERROR: Decompressed != src, nbChunk=%ld\n", nbChunk);
+            }
 
             GETTIME(endTicks);
             if (ZSTD_isError(dcSize)) {
@@ -526,11 +546,15 @@ compressend:
             ratio * 100,
             verifyResult ? "PASS" : "FAIL");
 exit:
-    //close session for QATzip deflate
+    // QATzip deflate
     (void)qzTeardownSession(&sess);
     qzClose(&sess);
     (void)qzTeardownSession(&sess_decompress);
     qzClose(&sess_decompress);
+
+    // libdeflate
+    libdeflate_free_compressor(libdeflate1);
+    libdeflate_free_decompressor(libdeflate2);
 
     ZSTD_freeCCtx(zc);
     ZSTD_freeDCtx(zdc);
