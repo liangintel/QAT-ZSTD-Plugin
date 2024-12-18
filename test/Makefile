@@ -37,7 +37,9 @@ LIB     = ../src
 LDFLAGS = $(LIB)/libqatseqprod.a -I$(LIB)
 
 ifneq ($(ICP_ROOT), )
-	LDFLAGS += -lqat_s -lusdm_drv_s -Wl,-rpath,$(ICP_ROOT)/build -L$(ICP_ROOT)/build
+	# LDFLAGS += -lqat_s -lusdm_drv_s -Wl,-rpath,$(ICP_ROOT)/build -L$(ICP_ROOT)/build
+	# LDFLAGS += -lqat_s -lusdm_drv_s -Wl,-rpath,$(ICP_ROOT)/build -L$(ICP_ROOT)/build -L/home/liang/tencent/liangdev/lvl_db/xFastCompress -lxFastCompress -I/home/liang/tencent/liangdev/lvl_db/xFastCompress
+	LDFLAGS += -lqat_s -lusdm_drv_s -llz4 -lz -Wl,-rpath,$(ICP_ROOT)/build -L$(ICP_ROOT)/build /home/liang/QATzip/src/.libs/libqatzip.a -I/home/liang/QATzip/include/
 else
 	LDFLAGS += -lqat -lusdm
 endif
@@ -64,6 +66,7 @@ test: test.c
 
 benchmark: benchmark.c
 	$(Q)$(MAKE) -C $(LIB)
+	rm -f benchmark
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@ -lpthread
 
 clean:
