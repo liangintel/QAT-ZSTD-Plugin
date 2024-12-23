@@ -42,6 +42,7 @@ ifneq ($(ICP_ROOT), )
 	LDFLAGS += -lqat_s -lusdm_drv_s -llz4 -lz -Wl,-rpath,$(ICP_ROOT)/build -L$(ICP_ROOT)/build 
 	LDFLAGS += /home/liang/QATzip/src/.libs/libqatzip.a -I/home/liang/QATzip/include/
 	LDFLAGS += /home/liang/libdeflate/build/libdeflate.a -I/home/liang/libdeflate/
+	LDFLAGS += -L/home/liang/tencent/liangdev/lvl_db/xFastCompress -lxFastCompress -I/home/liang/tencent/liangdev/lvl_db/xFastCompress
 else
 	LDFLAGS += -lqat -lusdm
 endif
@@ -69,7 +70,7 @@ test: test.c
 benchmark: benchmark.c
 	$(Q)$(MAKE) -C $(LIB)
 	rm -f benchmark
-	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@ -lpthread
+	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@ -lpthread  -g -ggdb3 -O0
 
 clean:
 	$(Q)$(MAKE) -C $(LIB) $@
