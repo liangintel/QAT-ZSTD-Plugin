@@ -51,8 +51,13 @@
 #include "zstd_errors.h"
 #include "qatseqprod.h"
 
+// #define QATZIP_ENABLED  1
+// #define XFC_ENABLED  1
+
 #define uint64_t size_t
+#ifdef XFC_ENABLED
 #include "xFastCompress.h"
+#endif
 
 #include "qatzip.h"
 #include "qz_utils.h"
@@ -84,6 +89,18 @@ typedef enum {
     XFASTCOMPRESS_ENGINE = 3,
     LIBDEFLATE_ENGINE = 4
 } engine_t;
+
+const char* get_engine_name(engine_t eng) {
+    switch(eng) {
+    case SOFTWARE_ENGINE: return "Software ZSTD"; break;
+    case QAT_ZSTD_ENGINE: return "QAT ZSTD"; break;
+    case QATZIP_ENGINE: return "QATzip Deflate"; break;
+    case XFASTCOMPRESS_ENGINE: return "xFastCompress Deflate"; break;
+    case LIBDEFLATE_ENGINE: return "libdeflate"; break;
+    default: return "Engine Name Error!!!"; break;
+    }
+    return "Engine Name Error!!!";
+}
 
 typedef struct {
     size_t chunkSize; /* the max chunk size of ZSTD_compress2 */
@@ -281,9 +298,6 @@ typedef enum {
     X_FAST_COMPRESS_DEFLATE = 3
 } algorithm_t;
 
-//#define QATZIP_ENABLED  1
-#define XFC_ENABLED  1
-
 void *benchmark(void *args)
 {
     threadArgs_t *threadArgs = (threadArgs_t *)args;
@@ -311,10 +325,12 @@ void *benchmark(void *args)
 
     //QATzip for deflate
     QzSession_T sess = {0};
-    QzSession_T sess_decompress = {0};
+    // QzSession_T sess_decompress = {0};
 
     //xFastCompress
+#ifdef XFC_ENABLED
     xfc_t xfc;
+#endif
 
     //libdeflate
     struct libdeflate_compressor *libdeflate1 = libdeflate_alloc_compressor(1);
@@ -347,13 +363,15 @@ void *benchmark(void *args)
         if (rc2 != QZ_OK && rc2 != QZ_DUPLICATE) {
             pthread_exit((void *)"qzInit failed");
         }
-        rc2 = qzInitSetupsession(&sess_decompress, 0);
-        if (rc2 != QZ_OK && rc2 != QZ_DUPLICATE) {
-            pthread_exit((void *)"qzInit failed");
-        }
+        // rc2 = qzInitSetupsession(&sess_decompress, 0);
+        // if (rc2 != QZ_OK && rc2 != QZ_DUPLICATE) {
+        //     pthread_exit((void *)"qzInit failed");
+        // }
     } else if (threadArgs->benchMode == XFASTCOMPRESS_ENGINE) {
+#ifdef XFC_ENABLED
         if(ECORD_SECCESS != xfc_alloc_compressor(&xfc))
             pthread_exit((void *)"xfc_alloc_compressor failed.");
+#endif
     }
 
     if (threadArgs->searchForExternalRepcodes == ZSTD_ENABLED) {
@@ -380,6 +398,7 @@ void *benchmark(void *args)
 
     /* warm up */
     for (loops = 0; loops < 1; loops++) {
+        unsigned char *tmpDecompBuffer = decompBuffer;
         unsigned char *tmpDestBuffer = destBuffer;
         const unsigned char *tmpSrcBuffer = srcBuffer;
         size_t tmpDestSize = destSize;
@@ -389,6 +408,7 @@ void *benchmark(void *args)
                                     chunkSizes[nbChunk]);
             }
 
+#ifdef XFC_ENABLED
             if (threadArgs->benchMode == XFASTCOMPRESS_ENGINE) {
                 const char* in_buf = tmpSrcBuffer;
                 char* out_buf = tmpDestBuffer;
@@ -396,6 +416,7 @@ void *benchmark(void *args)
                 int out_len = in_len;   //liang: should be larger
                 int ret = xfc_compress(xfc, in_buf, in_len, &out_buf, &out_len, 1, 0);
             }
+#endif
 
             if (threadArgs->benchMode == QATZIP_ENGINE) {
                 unsigned int in_sz = chunkSizes[nbChunk];
@@ -403,15 +424,21 @@ void *benchmark(void *args)
                 int ret = qzCompress(&sess, tmpSrcBuffer, &in_sz, tmpDestBuffer, &out_sz, 1);
                 if (ret != QZ_OK) {
                     QZ_ERROR("ERROR: Compression FAILED with return value: %d\n", ret);
-                    // dumpInputData(in_sz, src + consumed);
-                    // goto done;
                 }
                 cSize = out_sz;
+
+                in_sz = cSize;
+                out_sz = chunkSizes[nbChunk];
+                ret = qzDecompress(&sess, tmpDestBuffer, &in_sz, tmpDecompBuffer, &out_sz);
+                if (ret != QZ_OK) {
+                    QZ_ERROR("ERROR: DeCompression FAILED with return value: %d\n", ret);
+                }
             }
 
             tmpDestBuffer += cSize;
             tmpDestSize -= cSize;
             tmpSrcBuffer += chunkSizes[nbChunk];
+            tmpDecompBuffer += chunkSizes[nbChunk];
         }
     }
 
@@ -435,6 +462,7 @@ setupend:
                                     chunkSizes[nbChunk]);
             }
 
+#ifdef XFC_ENABLED
             // xfastcompress deflate
             if (threadArgs->benchMode == XFASTCOMPRESS_ENGINE)
             {
@@ -449,6 +477,7 @@ setupend:
                     printf("xfc_compress return failer.");
                 }
             }
+#endif
 
             // QATzip deflate
             if (threadArgs->benchMode == QATZIP_ENGINE) {
@@ -498,7 +527,7 @@ setupend:
         if (threadArgs->benchMode == QATZIP_ENGINE) {
             unsigned int in_sz = cSize;
             unsigned int out_sz = srcSize;
-            int ret = qzDecompress(&sess_decompress, destBuffer, &in_sz, decompBuffer, &out_sz);
+            int ret = qzDecompress(&sess, destBuffer, &in_sz, decompBuffer, &out_sz);
             if (ret != QZ_OK) {
                 QZ_ERROR("ERROR: DeCompression FAILED with return value: %d\n", ret);
                 goto compressend;
@@ -515,6 +544,7 @@ setupend:
             }
         }
 
+#ifdef XFC_ENABLED
         if (threadArgs->benchMode == XFASTCOMPRESS_ENGINE) {
             const char* in_buf = destBuffer;
             char* out_buf = decompBuffer;
@@ -522,7 +552,7 @@ setupend:
             int out_len = srcSize;   //liang: should be larger
             int ret = xfc_compress(xfc, in_buf, in_len, &out_buf, &out_len, 0, 0);
         }
-
+#endif
         /* Compare original buffer with decompress output */
         if (!memcmp(decompBuffer, srcBuffer, srcSize)) {
             verifyResult = 1;
@@ -559,7 +589,7 @@ compressend:
                 unsigned int in_sz = compSizes[nbChunk];
                 unsigned int out_sz = chunkSizes[nbChunk];
                 // QZ_ERROR("before in_sz=%d, out_sz=%d\n", in_sz, out_sz);
-                int ret = qzDecompress(&sess_decompress, tmpSrcBuffer, &in_sz, tmpDestBuffer, &out_sz);
+                int ret = qzDecompress(&sess, tmpSrcBuffer, &in_sz, tmpDestBuffer, &out_sz);
                 if (ret != QZ_OK) {
                     QZ_ERROR("ERROR: DeCompression FAILED with return value: %d\n", ret);
                     // goto done;
@@ -568,6 +598,7 @@ compressend:
                 // QZ_ERROR("after in_sz=%d, out_sz=%d\n", in_sz, out_sz);
             }
 
+#ifdef XFC_ENABLED
             if (threadArgs->benchMode == XFASTCOMPRESS_ENGINE) {
                 // const char* in_buf = destBuffer;
                 // char* out_buf = decompBuffer;
@@ -575,7 +606,7 @@ compressend:
                 // int out_len = srcSize;   //liang: should be larger
                 // int ret = xfc_compress(xfc, in_buf, in_len, &out_buf, &out_len, 0, 0);
             }
-
+#endif
             if (threadArgs->benchMode == LIBDEFLATE_ENGINE) {
                 if(LIBDEFLATE_SUCCESS != libdeflate_gzip_decompress(libdeflate2, 
                             tmpSrcBuffer, compSizes[nbChunk], 
@@ -584,12 +615,12 @@ compressend:
                 }
             }
 
+            GETTIME(endTicks);
             /* Compare original buffer with decompress output */
             if (memcmp(tmpDestBuffer, tmpOriBuffer, dcSize)) {
                 QZ_ERROR("ERROR: Decompressed != src, nbChunk=%ld\n", nbChunk);
             }
 
-            GETTIME(endTicks);
             if (ZSTD_isError(dcSize)) {
                 DISPLAY("Decompress failed\n");
                 goto exit;
@@ -612,6 +643,7 @@ compressend:
                 NANOSEC);
     decompSpeed = (double)(srcSize * nbIterations) / ((double)decompNanosecSum /
                   NANOSEC);
+    DISPLAY("Engine: [%s]\n", get_engine_name(threadArgs->benchMode));
     DISPLAY("Thread %lu: Compression: %lu -> %lu, Throughput: Comp: %5.f MB/s, Decomp: %5.f MB/s, Compression Ratio: %2.2f%%, %s\n",
             threadNum, srcSize, cSize, (double) compSpeed / MB, (double) decompSpeed / MB,
             ratio * 100,
@@ -621,8 +653,8 @@ exit:
 #ifdef QATZIP_ENABLED
     (void)qzTeardownSession(&sess);
     qzClose(&sess);
-    (void)qzTeardownSession(&sess_decompress);
-    qzClose(&sess_decompress);
+    // (void)qzTeardownSession(&sess_decompress);
+    // qzClose(&sess_decompress);
 #endif
 
 #ifdef XFC_ENABLED
