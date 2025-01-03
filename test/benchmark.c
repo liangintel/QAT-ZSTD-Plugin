@@ -325,7 +325,6 @@ void *benchmark(void *args)
 
     //QATzip for deflate
     QzSession_T sess = {0};
-    // QzSession_T sess_decompress = {0};
 
     //xFastCompress
 #ifdef XFC_ENABLED
@@ -359,14 +358,10 @@ void *benchmark(void *args)
         ZSTD_registerSequenceProducer(zc, NULL, NULL);
     }
     if (threadArgs->benchMode == QATZIP_ENGINE) {
-        int rc2 = qzInitSetupsession(&sess, 0);
+        int rc2 = qzInitSetupsession(&sess, 1);
         if (rc2 != QZ_OK && rc2 != QZ_DUPLICATE) {
             pthread_exit((void *)"qzInit failed");
         }
-        // rc2 = qzInitSetupsession(&sess_decompress, 0);
-        // if (rc2 != QZ_OK && rc2 != QZ_DUPLICATE) {
-        //     pthread_exit((void *)"qzInit failed");
-        // }
     } else if (threadArgs->benchMode == XFASTCOMPRESS_ENGINE) {
 #ifdef XFC_ENABLED
         if(ECORD_SECCESS != xfc_alloc_compressor(&xfc))
@@ -653,8 +648,6 @@ exit:
 #ifdef QATZIP_ENABLED
     (void)qzTeardownSession(&sess);
     qzClose(&sess);
-    // (void)qzTeardownSession(&sess_decompress);
-    // qzClose(&sess_decompress);
 #endif
 
 #ifdef XFC_ENABLED
